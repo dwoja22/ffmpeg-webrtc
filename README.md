@@ -11,3 +11,5 @@ build binary,
 run it,
 if your camera supports h264 go to localhost:5000,
 hit play button
+
+Works in goolge chrome only at the moment
