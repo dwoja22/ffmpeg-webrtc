@@ -91,7 +91,7 @@ func (c *Camera) Stop() {
 	}
 }
 
-func (c *Camera) NewPeerConnection() (*webrtc.PeerConnection, error) {
+func (c *Camera) NewPeerConnection(m webrtc.MediaEngine) (*webrtc.PeerConnection, error) {
 	config := webrtc.Configuration{
 		ICEServers: []webrtc.ICEServer{
 			{
@@ -102,7 +102,7 @@ func (c *Camera) NewPeerConnection() (*webrtc.PeerConnection, error) {
 
 	var err error
 
-	c.peerConnection, err = webrtc.NewPeerConnection(config)
+	c.peerConnection, err = webrtc.NewAPI(webrtc.WithMediaEngine(m)).NewPeerConnection(config)
 	if err != nil {
 		return nil, errors.New("webrtc could not create peer connection. " + err.Error())
 	}
