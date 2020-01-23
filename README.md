@@ -4,6 +4,7 @@ example on how to stream h264 encoded video from ffmpeg via webrtc on linux base
 **dependencies**
 > ffmpeg,
 v4l2
+h264 capable web cam
 
 **how to use**
 clone repository,
