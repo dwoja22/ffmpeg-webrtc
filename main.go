@@ -15,30 +15,35 @@ import (
 func main() {
 	done := make(chan bool, 1)
 
-	file, err := ioutil.ReadFile("config.json")
-	if err != nil {
-		log.Printf("could not open file. %v. generating default config\n", err)
+	_, err := os.Stat("config.json")
 
+	if os.IsNotExist(err) {
+		log.Println("config.json not found. generating default configuration")
 		if err := generateConfig(); err != nil {
 			log.Fatal(err)
 		}
-	} else {
-		var config Config
-
-		if err := json.Unmarshal(file, &config); err != nil {
-			log.Fatal("could not unmarshal configuration. ", err)
-		}
-
-		room := NewRoom()
-		go room.Run(done)
-
-		mux := config.Server.Start()
-		if err := registerHandlers(mux, room); err != nil {
-			log.Fatal(err)
-		}
-
-		go config.Camera.EventListener(done, room)
 	}
+
+	file, err := ioutil.ReadFile("config.json")
+	if err != nil {
+		log.Fatal("could not open file. ", err)
+	}
+
+	var config Config
+
+	if err := json.Unmarshal(file, &config); err != nil {
+		log.Fatal("could not unmarshal configuration. ", err)
+	}
+
+	room := NewRoom()
+	go room.Run(done)
+
+	mux := config.Server.Start()
+	if err := registerHandlers(mux, room); err != nil {
+		log.Fatal(err)
+	}
+
+	go config.Camera.EventListener(done, room)
 
 	wg := &sync.WaitGroup{}
 	wg.Add(1)
