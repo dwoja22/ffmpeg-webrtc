@@ -55,9 +55,10 @@ func (c *Camera) EventListener(done chan bool, room *Room) {
 						break
 					}
 				}
+
 				if h264PayloadType == 0 {
 					fmt.Println("Remote peer does not support H264")
-					return
+					continue
 				}
 
 				fmt.Println("received offer")
