@@ -26,12 +26,6 @@ func (c *Camera) EventListener(done chan bool, room *Room) {
 		case m := <-room.Inbound:
 			switch m.Type {
 			case offer:
-				fmt.Println("received offer")
-				peerConnection, err := c.NewPeerConnection()
-				if err != nil {
-					fmt.Println(err)
-					continue
-				}
 
 				remoteSdp := webrtc.SessionDescription{}
 
@@ -47,6 +41,31 @@ func (c *Camera) EventListener(done chan bool, room *Room) {
 				}
 
 				fmt.Printf("%+v", remoteSdp)
+
+				mediaEngine := webrtc.MediaEngine{}
+				if err := mediaEngine.PopulateFromSDP(remoteSdp); err != nil {
+					fmt.Println("webrtc could not create media engine.", err)
+					continue
+				}
+
+				var h264PayloadType uint8
+				for _, videoCodec := range mediaEngine.GetCodecsByKind(webrtc.RTPCodecTypeVideo) {
+					if videoCodec.Name == "H264" {
+						h264PayloadType = videoCodec.PayloadType
+						break
+					}
+				}
+				if h264PayloadType == 0 {
+					fmt.Println("Remote peer does not support H264")
+					return
+				}
+
+				fmt.Println("received offer")
+				peerConnection, err := c.NewPeerConnection(mediaEngine)
+				if err != nil {
+					fmt.Println(err)
+					continue
+				}
 
 				peerConnection.OnICECandidate(func(ice *webrtc.ICECandidate) {
 					if ice == nil {
@@ -68,7 +87,7 @@ func (c *Camera) EventListener(done chan bool, room *Room) {
 					fmt.Println("could not set remote description.", err)
 				}
 
-				videoTrack, err := peerConnection.NewTrack(webrtc.DefaultPayloadTypeH264, rand.Uint32(), "usb_cam", c.Name)
+				videoTrack, err := peerConnection.NewTrack(h264PayloadType, rand.Uint32(), "usb_cam", c.Name)
 				if err != nil {
 					fmt.Println("webrtc could not create video track.", err)
 					continue
