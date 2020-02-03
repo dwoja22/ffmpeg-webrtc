@@ -35,7 +35,6 @@ func (c *Camera) Stream(videoTrack *webrtc.Track) error {
 		return err
 	}
 
-	c.off = make(chan bool)
 	framebuffer := make(chan []byte, 60)
 
 	go func() {
@@ -54,6 +53,8 @@ func (c *Camera) Stream(videoTrack *webrtc.Track) error {
 			}
 		}
 	}()
+
+	c.off = make(chan bool)
 
 	go func() {
 		for {
