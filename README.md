@@ -1,14 +1,29 @@
-**ffmpeg-webrtc**
-example on how to stream h264 encoded video from ffmpeg via webrtc on linux based systems
+# ffmpeg-webrtc
+ffmpeg-webrtc is an example app that demonstrates how to stream a h264 capable web cam via Pion WebRTC on linux based systems
 
-**dependencies**
-> ffmpeg,
-v4l2,
-h264 capable web cam
+## Dependencies
+* ffmpeg
+* v4l2
+* h264 capable usb cam
 
-**how to use**
-clone repository,
-build binary,
-run it,
-if your camera supports h264 go to localhost:5000,
-hit play button
+## Instructions
+Install v4l-utils
+```
+sudo apt-get install v4l-utils
+```
+Install ffmpeg
+```
+sudo apt-get install ffmpeg
+```
+Build
+```
+git clone https://github.com/dwoja22/ffmpeg-webrtc.git
+cd ffmpeg-webrtc
+go build
+```
+Run it
+```
+./ffmpeg-webrtc
+```
+* open Firefox or Google Chrome and navigate to localhost:5000
+* click play
