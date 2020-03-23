@@ -1,0 +1,11 @@
+{
+ "Camera": {
+  "name": "USB2.0Camera",
+  "width": 640,
+  "height": 480,
+  "device_path": "/dev/video2"
+ },
+ "Server": {
+  "port": ":5000"
+ }
+}
