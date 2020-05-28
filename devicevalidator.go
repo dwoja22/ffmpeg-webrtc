@@ -4,7 +4,7 @@ import (
 	"errors"
 	"os/exec"
 	"path/filepath"
-	"strconv"
+	"regexp"
 	"strings"
 )
 
@@ -20,23 +20,19 @@ func checkDevices() ([]string, error) {
 
 	supportedDevices := []string{}
 
-	for id, device := range devices {
+	for _, device := range devices {
 		out, err := exec.Command("v4l2-ctl", "--device="+device, "--list-formats").Output()
+		if err != nil {
+			return nil, errors.New(err.Error())
+		}
+
+		match, err := regexp.MatchString("H.264", string(out))
 		if err != nil {
 			return nil, err
 		}
 
-		data := processV4l2(string(out))
-		formats := strings.Split(data, "\n")
-
-		for _, format := range formats {
-			details := strings.Split(format, ":")
-
-			for _, detail := range details {
-				if detail == "H.264" {
-					supportedDevices = append(supportedDevices, "/dev/video"+strconv.Itoa(id))
-				}
-			}
+		if match {
+			supportedDevices = append(supportedDevices, device)
 		}
 	}
 
@@ -47,7 +43,6 @@ func processV4l2(input string) string {
 	data := strings.Replace(input, "\n\n", "\n", -1)
 	data = strings.Replace(data, "\n\t", "\n", -1)
 	data = strings.Replace(data, "\n\n\t", "\n", -1)
-	data = strings.Replace(data, " ", "", -1)
 
 	return data
 }
