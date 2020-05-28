@@ -17,19 +17,31 @@
     </div>
   </div>
 
-  {{template "scripts"}}
-
-  <script> 
+  <script>
     offer        = "1"
     answr        = "2"
     off          = "3"
     iceCandidate = "4"
 
-    var host = {{.}} 
-    ws_connect(host).then((ws_socket)=> {
-    }).catch((err)=>{
-      console.log(err)
-    })
+    var host = {{.}}
+
+    if(!window["WebSocket"]){
+      console.log("error:browser does not support web sockets.")
+    }
+
+    let ws_socket = new WebSocket('ws://'+host+'/ws')
+
+    ws_socket.onopen = () => {
+      console.log("ws successfully opened")
+    }
+
+    ws_socket.onerror = (err) => {
+      console.log("error in ws communication")
+    }
+
+    ws_socket.onclose = () => {
+      console.log("ws closed")
+    }
 
     ws_socket.onmessage = (e) => {
       let m = JSON.parse(e.data)
@@ -57,6 +69,11 @@
       }
     }
 
+    var peer_connection = new RTCPeerConnection({
+      "ice_servers":[{ "urls" : "stun:stun.l.google.com:19302"},]
+    })
+
+
     function stop() {
         peer_connection.close()
         console.log("peer_connection closed")
@@ -73,9 +90,6 @@
     var constraints = undefined
     var ice_target = ""
 
-    peer_connection = new RTCPeerConnection({
-      "ice_servers":[{ "urls" : "stun:stun.l.google.com:19302"},]
-    })
 
     function play() {
       peer_connection.ontrack = function (event) {
