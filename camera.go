@@ -63,7 +63,6 @@ func (c *Camera) Stream(videoTrack *webrtc.Track) error {
 				c.peerConnection.Close()
 				if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
 					log.Println("failed to kill camera process. ", err)
-					return
 				}
 				return
 			case f := <-framebuffer:
