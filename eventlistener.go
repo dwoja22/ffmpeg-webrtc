@@ -84,19 +84,9 @@ func (c *Camera) EventListener(done chan bool, room *Room) {
 					fmt.Printf("connection state has changed %s \n", connectionState.String())
 				})
 
-				if err := peerConnection.SetRemoteDescription(remoteSdp); err != nil {
-					fmt.Println("could not set remote description.", err)
-				}
-
-				videoTrack, err := peerConnection.NewTrack(h264PayloadType, rand.Uint32(), "usb_cam", c.Name)
+				videoTrack, err := peerConnection.NewTrack(h264PayloadType, rand.Uint32(), "usb_cam", "usb_cam")
 				if err != nil {
 					fmt.Println("webrtc could not create video track.", err)
-					continue
-				}
-
-				_, err = peerConnection.AddTrack(videoTrack)
-				if err != nil {
-					fmt.Println("webrtc could not add video track.", err)
 					continue
 				}
 
@@ -108,6 +98,10 @@ func (c *Camera) EventListener(done chan bool, room *Room) {
 				if err != nil {
 					fmt.Println("webrtc could not set transceiver direction. ", err)
 					continue
+				}
+
+				if err := peerConnection.SetRemoteDescription(remoteSdp); err != nil {
+					fmt.Println("could not set remote description.", err)
 				}
 
 				answr, err := peerConnection.CreateAnswer(nil)
