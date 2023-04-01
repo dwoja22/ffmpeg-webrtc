@@ -25,5 +25,5 @@ Run it
 ```
 ./ffmpeg-webrtc
 ```
-* open Firefox or Google Chrome and navigate to localhost:5000
+* open Firefox or Google Chrome and navigate to localhost:7000
 * click play
