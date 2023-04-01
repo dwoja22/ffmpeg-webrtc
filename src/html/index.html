@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>WebRTC</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+</head>
+<body>
+  <button id="start" onclick="start()">Start</button>
+  <button id="stop" onclick="stop()">Stop</button>
+  <div id="video"></div>
+</body>
+
+<script>
+  //generate random string id
+  var clientID = Date.now().toString(36) + Math.random().toString(36).substring(2, 15);
+  var message = '';
+  var host = '{{.}}';
+  var Offer = 0, Answer = 1, IceCandidate = 2, Stop = 3;
+  var pc = new RTCPeerConnection({
+    iceServers: [{
+      urls: 'stun:stun.l.google.com:19302'
+    }]
+  });
+
+
+
+  if (window.WebSocket) {
+    var ws = new WebSocket('ws://' + host + '/ws?clientID=' + clientID);
+    ws.onopen = function() {
+      console.log('connected to ' + host);
+    };
+
+    ws.onmessage = function(evt) {
+      let m = JSON.parse(evt.data)
+      kind = m.kind;
+      switch (kind) {
+        case Answer:
+          console.log('received answer');
+          let answer = m.answer;
+          pc.setRemoteDescription(answer)
+
+          break;
+        case IceCandidate:
+          console.log('received icecandidate from peer');
+          let iceCandidate = m.ice_candidate;
+          pc.addIceCandidate(iceCandidate)
+
+          break;
+        default:
+          console.log('received unknown message');
+      }
+    };
+
+    ws.onclose = function() {
+      console.log('disconnected');
+    };
+  } else {
+    console.log('browser does not support websocket');
+  }
+
+  function start() {
+    var video = document.getElementById('video');
+
+    pc.addTransceiver('video', {
+      direction: 'recvonly'
+    });
+
+    pc.peerIdentity = clientID;
+
+    pc.onicecandidate = function(event) {
+      console.log('onIceCandidate event triggered');
+      if (event.candidate) {
+        let m = {
+          client_id:clientID,
+          kind: IceCandidate,
+          client_ice_candidate: event.candidate.toJSON(),
+        };
+
+        ws.send(JSON.stringify(m));
+      }else{
+        console.log('ice candidate is null');
+      }
+    };
+
+    let options = {
+      OfferToReceiveAudio: false,
+      OfferToReceiveVideo:true,
+    };
+
+    pc.createOffer(options).then(function(local_offer) {
+      pc.setLocalDescription(local_offer);
+      offer = JSON.stringify(local_offer);
+
+      let m = {
+        client_id: clientID,
+        kind : Offer,
+        offer: local_offer
+      };
+
+      ws.send(JSON.stringify(m));
+    })
+
+    pc.ontrack = function(event) {
+      console.log('ontrack event triggered');
+
+      let track = document.createElement(event.track.kind);
+      track.autoplay = true;
+      track.controls = true;
+
+      track.srcObject = event.streams[0];
+      video.appendChild(track);
+    };
+  }
+
+  function stop() {
+    pc.close();
+
+    let m = {
+      client_id: clientID,
+      kind: Stop,
+    };
+
+    ws.send(JSON.stringify(m));
+    ws.close();
+  }
+</script>

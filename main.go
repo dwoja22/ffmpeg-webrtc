@@ -1,75 +1,25 @@
-// +build linux
-
 package main
 
 import (
-	"encoding/json"
-	"io/ioutil"
 	"log"
 	"os"
 	"os/signal"
-	"sync"
+	"ffmpeg-webrtc/pkg/camera"
 	"syscall"
-	"time"
 )
 
 func main() {
-	done := make(chan bool, 1)
-
-	_, err := os.Stat("config.json")
-
-	if os.IsNotExist(err) {
-		log.Println("config.json not found. generating default configuration")
-		if err := generateConfig(); err != nil {
-			log.Fatal(err)
-		}
-	}
-
-	file, err := ioutil.ReadFile("config.json")
+	camera, err := camera.NewCamera()
 	if err != nil {
-		log.Fatal("could not open file. ", err)
-	}
-
-	var config Config
-
-	if err := json.Unmarshal(file, &config); err != nil {
-		log.Fatal("could not unmarshal configuration. ", err)
-	}
-
-	room := NewRoom()
-	go room.Run(done)
-
-	mux := config.Server.Start()
-	if err := registerHandlers(mux, room); err != nil {
 		log.Fatal(err)
 	}
 
-	go config.Camera.EventListener(done, room)
+	if err := camera.Start(); err != nil {
+		log.Fatal(err)
+	}
 
-	wg := &sync.WaitGroup{}
-	wg.Add(1)
-
-	handleShutdown(done, wg)
-	wg.Wait()
-
-	time.Sleep(time.Second)
-}
-
-func handleShutdown(done chan bool, wg *sync.WaitGroup) {
-	ch := make(chan os.Signal, 1)
-	go func() {
-		for {
-			select {
-			case <-done:
-				wg.Done()
-				return
-			case <-ch:
-				log.Println("ctrl+c interrupt received")
-				close(done)
-				wg.Done()
-				return
-			}
-		}
-	}()
-	signal.Notify(ch, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	osSignals := make(chan os.Signal, 1)
+	signal.Notify(osSignals, os.Interrupt, os.Kill, syscall.SIGTERM)
+	<-osSignals
+	camera.Stop()
 }
