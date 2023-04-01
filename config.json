@@ -1,0 +1,20 @@
+{
+  "app":"ffmpeg",
+  "args":[
+    "-f",
+    "v4l2",
+    "-framerate",
+    "30",
+    "-video_size",
+    "1920x1080",
+    "-input_format",
+    "h264",
+    "-i",
+    "/dev/video0",
+    "-c:v",
+    "copy",
+    "-f",
+    "h264",
+    "pipe:1"
+  ]
+}
