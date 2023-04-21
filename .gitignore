@@ -1,1 +1,3 @@
 ffmpeg-webrtc
+*.swp
+*.swo

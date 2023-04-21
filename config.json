@@ -6,7 +6,7 @@
     "-framerate",
     "30",
     "-video_size",
-    "1920x1080",
+    "1280x720",
     "-input_format",
     "h264",
     "-i",

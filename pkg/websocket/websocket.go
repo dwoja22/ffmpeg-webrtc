@@ -65,7 +65,20 @@ func (r *Room) Start() {
 			if m.Kind == OFFER {
 				mediaEngine := webrtc.MediaEngine{}
 
-				err := mediaEngine.RegisterCodec(webrtc.RTPCodecParameters{RTPCodecCapability: webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeH264, ClockRate: 90000, Channels: 0, SDPFmtpLine: "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f"}, PayloadType: 96}, webrtc.RTPCodecTypeVideo)
+				codec := webrtc.RTPCodecCapability{
+					MimeType:    webrtc.MimeTypeH264,
+					ClockRate:   90000,
+					Channels:    0,
+					SDPFmtpLine: "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f",
+					RTCPFeedback: []webrtc.RTCPFeedback{
+						{Type: "nack"},
+						{Type: "nack", Parameter: "pli"},
+						{Type: "ccm", Parameter: "fir"},
+						{Type: "goog-remb"},
+					},
+				}
+
+				err := mediaEngine.RegisterCodec(webrtc.RTPCodecParameters{RTPCodecCapability: codec, PayloadType: 96}, webrtc.RTPCodecTypeVideo)
 				if err != nil {
 					fmt.Println("error registering codec: ", err)
 				}
@@ -111,7 +124,7 @@ func (r *Room) Start() {
 				streamID := uuid.New().String()
 				trackID := uuid.New().String()
 
-				trackLocalStaticSample, err := webrtc.NewTrackLocalStaticSample(webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeH264}, streamID, trackID)
+				trackLocalStaticSample, err := webrtc.NewTrackLocalStaticSample(codec, streamID, trackID)
 				if err != nil {
 					fmt.Println("error creating track: ", err)
 					continue

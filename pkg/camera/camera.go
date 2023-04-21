@@ -12,7 +12,6 @@ import (
 	"ffmpeg-webrtc/pkg/server"
 	ws "ffmpeg-webrtc/pkg/websocket"
 
-	"github.com/pion/webrtc/v3"
 	"github.com/pion/webrtc/v3/pkg/media"
 )
 
@@ -24,8 +23,6 @@ type Camera struct {
 	done   chan bool
 	cmd    *exec.Cmd
 }
-
-var pc *webrtc.PeerConnection
 
 func NewCamera() (*Camera, error) {
 	file, err := ioutil.ReadFile("config.json")
@@ -60,6 +57,7 @@ func NewCamera() (*Camera, error) {
 }
 
 func (c *Camera) Start() error {
+
 	h264FrameDuration := time.Millisecond * 33
 
 	go c.room.Start()
@@ -83,7 +81,7 @@ func (c *Camera) Start() error {
 	go func() {
 		for {
 			if len(c.room.Tracks) > 0 {
-				buf := make([]byte, 600000)
+				buf := make([]byte, 60000)
 				n, err := pipe.Read(buf)
 				if err != nil {
 					fmt.Printf("error reading stdout: %v\n", err)
