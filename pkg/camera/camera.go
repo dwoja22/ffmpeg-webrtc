@@ -12,7 +12,7 @@ import (
 	"ffmpeg-webrtc/pkg/server"
 	ws "ffmpeg-webrtc/pkg/websocket"
 
-	"github.com/pion/webrtc/v3/pkg/media"
+	"github.com/pion/rtp"
 )
 
 type Camera struct {
@@ -25,12 +25,12 @@ type Camera struct {
 }
 
 func NewCamera() (*Camera, error) {
+	var camera Camera
+
 	file, err := ioutil.ReadFile("config.json")
 	if err != nil {
 		return nil, err
 	}
-
-	var camera Camera
 
 	if err = json.Unmarshal(file, &camera); err != nil {
 		return nil, err
@@ -58,8 +58,6 @@ func NewCamera() (*Camera, error) {
 
 func (c *Camera) Start() error {
 
-	h264FrameDuration := time.Millisecond * 33
-
 	go c.room.Start()
 	go c.server.StartServer()
 
@@ -79,19 +77,28 @@ func (c *Camera) Start() error {
 	}
 
 	go func() {
+		payloader := NewPayloader()
+		packetizer := rtp.NewPacketizer(1400, 96, c.room.SSRC, payloader, rtp.NewRandomSequencer(), 90000)
+
 		for {
 			if len(c.room.Tracks) > 0 {
-				buf := make([]byte, 60000)
+
+				buf := make([]byte, 600000)
 				n, err := pipe.Read(buf)
+
 				if err != nil {
 					fmt.Printf("error reading stdout: %v\n", err)
 					return
 				}
 
+				packets := packetizer.Packetize(buf[:n], uint32(time.Now().UnixNano()))
+
 				for _, track := range c.room.Tracks {
-					if err := track.WriteSample(media.Sample{Data: buf[:n], Duration: time.Duration(h264FrameDuration)}); err != nil {
-						fmt.Printf("error writing sample: %v\n", err)
-						c.room.UnregisterTrack(track)
+					for _, packet := range packets {
+						if err := track.WriteRTP(packet); err != nil {
+							fmt.Printf("error writing sample: %v\n", err)
+							c.room.UnregisterTrack(track)
+						}
 					}
 				}
 			}

@@ -3,6 +3,8 @@ package ws
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/google/uuid"
@@ -22,7 +24,8 @@ type Room struct {
 	Register   chan *Client
 	Unregister chan *Client
 	Peers      map[string]*webrtc.PeerConnection
-	Tracks     map[string]*webrtc.TrackLocalStaticSample
+	Tracks     map[string]*webrtc.TrackLocalStaticRTP
+	SSRC       uint32
 }
 
 func NewRoom() *Room {
@@ -32,7 +35,7 @@ func NewRoom() *Room {
 		Register:   make(chan *Client, 1),
 		Unregister: make(chan *Client, 1),
 		Peers:      make(map[string]*webrtc.PeerConnection),
-		Tracks:     make(map[string]*webrtc.TrackLocalStaticSample),
+		Tracks:     make(map[string]*webrtc.TrackLocalStaticRTP),
 	}
 }
 
@@ -124,25 +127,39 @@ func (r *Room) Start() {
 				streamID := uuid.New().String()
 				trackID := uuid.New().String()
 
-				trackLocalStaticSample, err := webrtc.NewTrackLocalStaticSample(codec, streamID, trackID)
+				trackLocalStaticRTP, err := webrtc.NewTrackLocalStaticRTP(codec, streamID, trackID)
 				if err != nil {
 					fmt.Println("error creating track: ", err)
 					continue
 				}
 
-				_, err = peerConnection.AddTrack(trackLocalStaticSample)
+				_, err = peerConnection.AddTrack(trackLocalStaticRTP)
 				if err != nil {
 					fmt.Println("error adding video track: ", err)
 					continue
 				}
 
-				r.RegisterTrack(trackLocalStaticSample)
+				r.RegisterTrack(trackLocalStaticRTP)
 
 				answer, err := peerConnection.CreateAnswer(nil)
 				if err != nil {
 					fmt.Println("error creating answer: ", err)
 					continue
 				}
+
+				//extract ssrc from answer
+				ssrc := answer.SDP
+				ssrc = strings.Split(ssrc, "a=ssrc:")[1]
+				ssrc = strings.Split(ssrc, " ")[0]
+
+				//convert ssrc to uint32 and set it to room
+				ssrcUint, err := strconv.ParseUint(ssrc, 10, 32)
+				if err != nil {
+					fmt.Println("error converting ssrc to uint32: ", err)
+					continue
+				}
+
+				r.SSRC = (uint32(ssrcUint))
 
 				if err := peerConnection.SetLocalDescription(answer); err != nil {
 					fmt.Println("error setting local description: ", err)
@@ -199,14 +216,14 @@ func (r *Room) UnregisterPeer(clientID string) {
 	delete(r.Peers, clientID)
 }
 
-func (r *Room) RegisterTrack(track *webrtc.TrackLocalStaticSample) {
+func (r *Room) RegisterTrack(track *webrtc.TrackLocalStaticRTP) {
 	trackLock.Lock()
 	defer trackLock.Unlock()
 
 	r.Tracks[track.ID()] = track
 }
 
-func (r *Room) UnregisterTrack(track *webrtc.TrackLocalStaticSample) {
+func (r *Room) UnregisterTrack(track *webrtc.TrackLocalStaticRTP) {
 	trackLock.Lock()
 	defer trackLock.Unlock()
 
