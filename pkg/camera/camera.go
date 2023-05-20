@@ -13,6 +13,7 @@ import (
 	ws "ffmpeg-webrtc/pkg/websocket"
 
 	"github.com/pion/rtp"
+	"github.com/pion/rtp/codecs"
 )
 
 type Camera struct {
@@ -76,28 +77,42 @@ func (c *Camera) Start() error {
 		return fmt.Errorf("error creating stdout pipe for command: %v", err)
 	}
 
+	buf := make([]byte, 1024*1024)
+	frames := make(chan []byte, 120)
+
 	go func() {
-		payloader := NewPayloader()
-		packetizer := rtp.NewPacketizer(1400, 96, c.room.SSRC, payloader, rtp.NewRandomSequencer(), 90000)
+		for {
+			if len(c.room.Tracks) > 0 {
+				fmt.Println("reading from stdout")
+				for {
+					n, err := pipe.Read(buf)
+					if err != nil {
+						fmt.Printf("error reading stdout: %v\n", err)
+						return
+					}
+
+					frames <- buf[:n]
+				}
+			}
+		}
+	}()
+
+	go func() {
+		//payloader := NewPayloader()
+		payloader := &codecs.H264Payloader{}
+		packetizer := rtp.NewPacketizer(1200, 96, c.room.SSRC, payloader, rtp.NewRandomSequencer(), 90000)
 
 		for {
 			if len(c.room.Tracks) > 0 {
+				for frame := range frames {
+					packets := packetizer.Packetize(frame, uint32(time.Now().UnixNano()))
 
-				buf := make([]byte, 600000)
-				n, err := pipe.Read(buf)
-
-				if err != nil {
-					fmt.Printf("error reading stdout: %v\n", err)
-					return
-				}
-
-				packets := packetizer.Packetize(buf[:n], uint32(time.Now().UnixNano()))
-
-				for _, track := range c.room.Tracks {
-					for _, packet := range packets {
-						if err := track.WriteRTP(packet); err != nil {
-							fmt.Printf("error writing sample: %v\n", err)
-							c.room.UnregisterTrack(track)
+					for _, track := range c.room.Tracks {
+						for _, packet := range packets {
+							if err := track.WriteRTP(packet); err != nil {
+								fmt.Printf("error writing sample: %v\n", err)
+								c.room.UnregisterTrack(track)
+							}
 						}
 					}
 				}
