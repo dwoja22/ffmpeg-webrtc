@@ -14,15 +14,18 @@ import (
 
 	"github.com/pion/rtp"
 	"github.com/pion/rtp/codecs"
+	"github.com/pion/webrtc/v3/pkg/media"
 )
 
 type Camera struct {
-	App    string   `json:"app"`
-	Args   []string `json:"args"`
-	room   *ws.Room
-	server server.Server
-	done   chan bool
-	cmd    *exec.Cmd
+	App        string   `json:"app"`
+	Args       []string `json:"args"`
+	Stderr     bool     `json:"stderr"`
+	StreamType string   `json:"stream_type"`
+	room       *ws.Room
+	server     server.Server
+	done       chan bool
+	cmd        *exec.Cmd
 }
 
 func NewCamera() (*Camera, error) {
@@ -52,12 +55,13 @@ func NewCamera() (*Camera, error) {
 	camera.room = room
 	camera.done = done
 	camera.server = server
+	camera.room.StreamType = camera.StreamType
 
 	return &camera, nil
-
 }
 
 func (c *Camera) Start() error {
+	h264FrameDuration := time.Millisecond * 33
 
 	go c.room.Start()
 	go c.server.StartServer()
@@ -70,7 +74,9 @@ func (c *Camera) Start() error {
 
 	fmt.Println(cmd.Args)
 
-	cmd.Stderr = os.Stderr
+	if c.Stderr {
+		cmd.Stderr = os.Stderr
+	}
 
 	pipe, err := cmd.StdoutPipe()
 	if err != nil {
@@ -78,12 +84,17 @@ func (c *Camera) Start() error {
 	}
 
 	buf := make([]byte, 1024*1024)
-	frames := make(chan []byte, 120)
+	//channel to read frames from ffmpeg and send to webrtc for type
+	sampleFrames := make(chan []byte, 24)
+	//channel to read rtp packets from ffmpeg and send to webrtc for type rtp
+	rtpFrames := make(chan []byte, 24)
+	//channel to read rtp packets from pion packetizer and send to webrtc
+	rtpPackets := make(chan *rtp.Packet, 240)
 
 	go func() {
 		for {
-			if len(c.room.Tracks) > 0 {
-				fmt.Println("reading from stdout")
+			if len(c.room.TracksSample) > 0 || len(c.room.TracksRTP) > 0 {
+				fmt.Println("start reading stdout")
 				for {
 					n, err := pipe.Read(buf)
 					if err != nil {
@@ -91,28 +102,52 @@ func (c *Camera) Start() error {
 						return
 					}
 
-					frames <- buf[:n]
+					if c.StreamType == "sample" {
+						sampleFrames <- buf[:n]
+					}
+
+					if c.StreamType == "rtp" {
+						rtpFrames <- buf[:n]
+					}
 				}
 			}
 		}
 	}()
 
+	if c.StreamType == "rtp" {
+		go func() {
+			//use the pion payloader to packetize the frames, mine is too slow
+			payloader := &codecs.H264Payloader{}
+			packetizer := rtp.NewPacketizer(1300, 96, c.room.SSRC, payloader, rtp.NewRandomSequencer(), 90000)
+
+			for frame := range rtpFrames {
+				packets := packetizer.Packetize(frame, uint32(time.Now().UnixNano()))
+				for _, packet := range packets {
+					rtpPackets <- packet
+				}
+			}
+		}()
+	}
+
 	go func() {
-		//payloader := NewPayloader()
-		payloader := &codecs.H264Payloader{}
-		packetizer := rtp.NewPacketizer(1200, 96, c.room.SSRC, payloader, rtp.NewRandomSequencer(), 90000)
-
 		for {
-			if len(c.room.Tracks) > 0 {
-				for frame := range frames {
-					packets := packetizer.Packetize(frame, uint32(time.Now().UnixNano()))
+			if len(c.room.TracksSample) > 0 && c.StreamType == "sample" {
+				for frame := range sampleFrames {
+					for trackID, track := range c.room.TracksSample {
+						if err := track.WriteSample(media.Sample{Data: frame, Duration: time.Duration(h264FrameDuration)}); err != nil {
+							fmt.Printf("error writing sample: %v\n", err)
+							c.room.UnregisterTracks(trackID)
+						}
+					}
+				}
+			}
 
-					for _, track := range c.room.Tracks {
-						for _, packet := range packets {
-							if err := track.WriteRTP(packet); err != nil {
-								fmt.Printf("error writing sample: %v\n", err)
-								c.room.UnregisterTrack(track)
-							}
+			if len(c.room.TracksRTP) > 0 && c.StreamType == "rtp" {
+				for packet := range rtpPackets {
+					for trackID, track := range c.room.TracksRTP {
+						if err := track.WriteRTP(packet); err != nil {
+							fmt.Printf("error writing sample: %v\n", err)
+							c.room.UnregisterTracks(trackID)
 						}
 					}
 				}
