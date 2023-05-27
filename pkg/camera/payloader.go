@@ -6,6 +6,7 @@ import (
 	"fmt"
 )
 
+//TODO:: improve the efficiency of this payloader
 type Payloader struct {
 	SPS []byte
 	PPS []byte
@@ -201,6 +202,7 @@ func extractNalUnits(data []byte, prefix int) [][]byte {
 	return nals
 }
 
+//TODO:: does not work as expected, ffprobe output and mine are different, fix this
 //function checks what type of nal units the data contains
 func nalType(data []byte) {
 	//check for nal unit type
