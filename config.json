@@ -16,5 +16,7 @@
     "-f",
     "h264",
     "pipe:1"
-  ]
+  ],
+  "stderr":true,
+  "strem_type":"rtp"
 }
