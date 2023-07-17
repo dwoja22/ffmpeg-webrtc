@@ -1,22 +1,16 @@
 {
   "app":"ffmpeg",
   "args":[
-    "-f",
-    "v4l2",
-    "-framerate",
-    "30",
-    "-video_size",
-    "1280x720",
-    "-input_format",
-    "h264",
+    "-re",
     "-i",
-    "/dev/video0",
+    "320x240.h264",
+    "-f",
+    "h264",
     "-c:v",
     "copy",
-    "-f",
-    "h264",
     "pipe:1"
   ],
   "stderr":true,
-  "strem_type":"rtp"
+  "debug":false,
+  "stream_type":"rtp"
 }

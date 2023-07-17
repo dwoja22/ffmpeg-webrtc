@@ -1,10 +1,10 @@
 package main
 
 import (
+	"ffmpeg-webrtc/pkg/camera"
 	"log"
 	"os"
 	"os/signal"
-	"ffmpeg-webrtc/pkg/camera"
 	"syscall"
 )
 

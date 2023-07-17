@@ -3,8 +3,6 @@ package ws
 import (
 	"encoding/json"
 	"fmt"
-	"strconv"
-	"strings"
 	"sync"
 
 	"github.com/google/uuid"
@@ -19,28 +17,33 @@ const (
 )
 
 type Room struct {
-	Clients      map[string]*Client
-	Broadcast    chan []byte
-	Register     chan *Client
-	Unregister   chan *Client
-	Peers        map[string]*webrtc.PeerConnection
-	TracksSample map[string]*webrtc.TrackLocalStaticSample
-	TracksRTP    map[string]*webrtc.TrackLocalStaticRTP
-	StreamType   string
+	Clients    map[string]*Client
+	Broadcast  chan []byte
+	Register   chan *Client
+	Unregister chan *Client
+	Peers      map[string]*webrtc.PeerConnection
+	Media      map[string]*Media
+	StreamType string
 	//pion packetizer requires an SSRC
 	//not sure what that is for, temporarily put here until I figure out why it's needed
-	SSRC uint32
+	SSRC webrtc.SSRC
+}
+
+type Media struct {
+	TrackSample *webrtc.TrackLocalStaticSample
+	TrackRTP    *webrtc.TrackLocalStaticRTP
+	RTPSender   *webrtc.RTPSender
+	SSRC        webrtc.SSRC
 }
 
 func NewRoom() *Room {
 	return &Room{
-		Clients:      make(map[string]*Client),
-		Broadcast:    make(chan []byte, 1),
-		Register:     make(chan *Client, 1),
-		Unregister:   make(chan *Client, 1),
-		Peers:        make(map[string]*webrtc.PeerConnection),
-		TracksSample: make(map[string]*webrtc.TrackLocalStaticSample),
-		TracksRTP:    make(map[string]*webrtc.TrackLocalStaticRTP),
+		Clients:    make(map[string]*Client),
+		Broadcast:  make(chan []byte, 1),
+		Register:   make(chan *Client, 1),
+		Unregister: make(chan *Client, 1),
+		Peers:      make(map[string]*webrtc.PeerConnection),
+		Media:      make(map[string]*Media),
 	}
 }
 
@@ -83,6 +86,7 @@ func (r *Room) Start() {
 						{Type: "nack", Parameter: "pli"},
 						{Type: "ccm", Parameter: "fir"},
 						{Type: "goog-remb"},
+						{Type: "transport-cc"},
 					},
 				}
 
@@ -133,18 +137,29 @@ func (r *Room) Start() {
 
 				if r.StreamType == "rtp" {
 					trackID := uuid.New().String()
+
 					trackLocalStaticRTP, err := webrtc.NewTrackLocalStaticRTP(codec, streamID, trackID)
 					if err != nil {
 						fmt.Println("error creating rtp track: ", err)
 					}
 
-					_, err = peerConnection.AddTrack(trackLocalStaticRTP)
+					rtpSender, err := peerConnection.AddTrack(trackLocalStaticRTP)
 					if err != nil {
 						fmt.Println("error adding rtp video track: ", err)
 						continue
 					}
 
-					r.RegisterTracks(nil, trackLocalStaticRTP)
+					encoding := rtpSender.GetParameters().Encodings
+
+					m := &Media{
+						TrackRTP:  trackLocalStaticRTP,
+						RTPSender: rtpSender,
+						SSRC:      encoding[0].SSRC,
+					}
+
+					r.SSRC = encoding[0].SSRC
+
+					r.RegisterMedia(client.id, m)
 				}
 
 				if r.StreamType == "sample" {
@@ -155,12 +170,21 @@ func (r *Room) Start() {
 						continue
 					}
 
-					_, err = peerConnection.AddTrack(trackLocalStaticSample)
+					rtpSender, err := peerConnection.AddTrack(trackLocalStaticSample)
 					if err != nil {
 						fmt.Println("error adding sample video track: ", err)
 						continue
 					}
-					r.RegisterTracks(trackLocalStaticSample, nil)
+
+					encoding := rtpSender.GetParameters().Encodings
+
+					m := &Media{
+						RTPSender:   rtpSender,
+						TrackSample: trackLocalStaticSample,
+						SSRC:        encoding[0].SSRC,
+					}
+
+					r.RegisterMedia(client.id, m)
 				}
 
 				answer, err := peerConnection.CreateAnswer(nil)
@@ -168,20 +192,6 @@ func (r *Room) Start() {
 					fmt.Println("error creating answer: ", err)
 					continue
 				}
-
-				//extract ssrc from answer
-				ssrc := answer.SDP
-				ssrc = strings.Split(ssrc, "a=ssrc:")[1]
-				ssrc = strings.Split(ssrc, " ")[0]
-
-				//convert ssrc to uint32 and set it to room
-				ssrcUint, err := strconv.ParseUint(ssrc, 10, 32)
-				if err != nil {
-					fmt.Println("error converting ssrc to uint32: ", err)
-					continue
-				}
-
-				r.SSRC = (uint32(ssrcUint))
 
 				if err := peerConnection.SetLocalDescription(answer); err != nil {
 					fmt.Println("error setting local description: ", err)
@@ -222,7 +232,7 @@ func (r *Room) Start() {
 }
 
 var peerLock sync.Mutex
-var trackLock sync.Mutex
+var mediaLock sync.Mutex
 
 func (r *Room) RegisterPeer(pc *webrtc.PeerConnection, clientID string) {
 	peerLock.Lock()
@@ -238,25 +248,18 @@ func (r *Room) UnregisterPeer(clientID string) {
 	delete(r.Peers, clientID)
 }
 
-func (r *Room) RegisterTracks(trackSample *webrtc.TrackLocalStaticSample, trackRTP *webrtc.TrackLocalStaticRTP) {
-	trackLock.Lock()
-	defer trackLock.Unlock()
+func (r *Room) RegisterMedia(id string, media *Media) {
+	mediaLock.Lock()
+	defer mediaLock.Unlock()
 
-	if trackSample != nil {
-		r.TracksSample[trackSample.ID()] = trackSample
-	}
-
-	if trackRTP != nil {
-		r.TracksRTP[trackRTP.ID()] = trackRTP
-	}
+	r.Media[id] = media
 }
 
-func (r *Room) UnregisterTracks(trackID string) {
-	trackLock.Lock()
-	defer trackLock.Unlock()
+func (r *Room) UnregisterMedia(id string) {
+	mediaLock.Lock()
+	defer mediaLock.Unlock()
 
-	delete(r.TracksSample, trackID)
-	delete(r.TracksRTP, trackID)
+	delete(r.Media, id)
 }
 
 func (r *Room) HandlePeer(pc *webrtc.PeerConnection, clientID string) {
