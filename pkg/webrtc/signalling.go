@@ -1,11 +1,12 @@
-package ws
+package webrtc
 
 import (
 	"encoding/json"
+	"ffmpeg-webrtc/pkg/h264"
 	"fmt"
-	"sync"
 
 	"github.com/google/uuid"
+	"github.com/pion/rtp"
 	"github.com/pion/webrtc/v3"
 )
 
@@ -21,29 +22,16 @@ type Room struct {
 	Broadcast  chan []byte
 	Register   chan *Client
 	Unregister chan *Client
-	Peers      map[string]*webrtc.PeerConnection
-	Media      map[string]*Media
-	StreamType string
-	//pion packetizer requires an SSRC
-	//not sure what that is for, temporarily put here until I figure out why it's needed
-	SSRC webrtc.SSRC
+	done       chan bool
 }
 
-type Media struct {
-	TrackSample *webrtc.TrackLocalStaticSample
-	TrackRTP    *webrtc.TrackLocalStaticRTP
-	RTPSender   *webrtc.RTPSender
-	SSRC        webrtc.SSRC
-}
-
-func NewRoom() *Room {
+func NewRoom(done chan bool) *Room {
 	return &Room{
 		Clients:    make(map[string]*Client),
 		Broadcast:  make(chan []byte, 1),
 		Register:   make(chan *Client, 1),
 		Unregister: make(chan *Client, 1),
-		Peers:      make(map[string]*webrtc.PeerConnection),
-		Media:      make(map[string]*Media),
+		done:       done,
 	}
 }
 
@@ -80,7 +68,7 @@ func (r *Room) Start() {
 					MimeType:    webrtc.MimeTypeH264,
 					ClockRate:   90000,
 					Channels:    0,
-					SDPFmtpLine: "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f",
+					SDPFmtpLine: "packetization-mode=1",
 					RTCPFeedback: []webrtc.RTCPFeedback{
 						{Type: "nack"},
 						{Type: "nack", Parameter: "pli"},
@@ -102,6 +90,8 @@ func (r *Room) Start() {
 					fmt.Println("error creating peer connection: ", err)
 					continue
 				}
+
+				client.PC = peerConnection
 
 				r.HandlePeer(peerConnection, client.id)
 
@@ -134,58 +124,27 @@ func (r *Room) Start() {
 				}
 
 				streamID := uuid.New().String()
+				trackID := uuid.New().String()
 
-				if r.StreamType == "rtp" {
-					trackID := uuid.New().String()
-
-					trackLocalStaticRTP, err := webrtc.NewTrackLocalStaticRTP(codec, streamID, trackID)
-					if err != nil {
-						fmt.Println("error creating rtp track: ", err)
-					}
-
-					rtpSender, err := peerConnection.AddTrack(trackLocalStaticRTP)
-					if err != nil {
-						fmt.Println("error adding rtp video track: ", err)
-						continue
-					}
-
-					encoding := rtpSender.GetParameters().Encodings
-
-					m := &Media{
-						TrackRTP:  trackLocalStaticRTP,
-						RTPSender: rtpSender,
-						SSRC:      encoding[0].SSRC,
-					}
-
-					r.SSRC = encoding[0].SSRC
-
-					r.RegisterMedia(client.id, m)
+				trackLocalStaticRTP, err := webrtc.NewTrackLocalStaticRTP(codec, streamID, trackID)
+				if err != nil {
+					fmt.Println("error creating rtp track: ", err)
 				}
 
-				if r.StreamType == "sample" {
-					trackID := uuid.New().String()
-					trackLocalStaticSample, err := webrtc.NewTrackLocalStaticSample(codec, streamID, trackID)
-					if err != nil {
-						fmt.Println("error creating track: ", err)
-						continue
-					}
-
-					rtpSender, err := peerConnection.AddTrack(trackLocalStaticSample)
-					if err != nil {
-						fmt.Println("error adding sample video track: ", err)
-						continue
-					}
-
-					encoding := rtpSender.GetParameters().Encodings
-
-					m := &Media{
-						RTPSender:   rtpSender,
-						TrackSample: trackLocalStaticSample,
-						SSRC:        encoding[0].SSRC,
-					}
-
-					r.RegisterMedia(client.id, m)
+				rtpSender, err := peerConnection.AddTrack(trackLocalStaticRTP)
+				if err != nil {
+					fmt.Println("error adding rtp video track: ", err)
+					continue
 				}
+
+				encoding := rtpSender.GetParameters().Encodings
+
+				client.Track = trackLocalStaticRTP
+				client.RTPSender = rtpSender
+				client.SSRC = encoding[0].SSRC
+
+				payloader := h264.NewPayloader()
+				client.Packetizer = rtp.NewPacketizer(1400, 96, uint32(client.SSRC), payloader, rtp.NewRandomSequencer(), 90000)
 
 				answer, err := peerConnection.CreateAnswer(nil)
 				if err != nil {
@@ -221,45 +180,12 @@ func (r *Room) Start() {
 				continue
 			}
 
+			//TODO: handle stop
 			if m.Kind == STOP {
 				fmt.Println("stop from client received")
-
-				pc := r.Peers[m.ClientID]
-				pc.Close()
 			}
 		}
 	}
-}
-
-var peerLock sync.Mutex
-var mediaLock sync.Mutex
-
-func (r *Room) RegisterPeer(pc *webrtc.PeerConnection, clientID string) {
-	peerLock.Lock()
-	defer peerLock.Unlock()
-
-	r.Peers[clientID] = pc
-}
-
-func (r *Room) UnregisterPeer(clientID string) {
-	peerLock.Lock()
-	defer peerLock.Unlock()
-
-	delete(r.Peers, clientID)
-}
-
-func (r *Room) RegisterMedia(id string, media *Media) {
-	mediaLock.Lock()
-	defer mediaLock.Unlock()
-
-	r.Media[id] = media
-}
-
-func (r *Room) UnregisterMedia(id string) {
-	mediaLock.Lock()
-	defer mediaLock.Unlock()
-
-	delete(r.Media, id)
 }
 
 func (r *Room) HandlePeer(pc *webrtc.PeerConnection, clientID string) {
@@ -268,22 +194,18 @@ func (r *Room) HandlePeer(pc *webrtc.PeerConnection, clientID string) {
 
 		if connectionState == webrtc.ICEConnectionStateConnected {
 			fmt.Println("peer connected")
-			r.RegisterPeer(pc, clientID)
 
+			go r.Clients[clientID].WriteRTP()
 			return
 		}
 
 		if connectionState == webrtc.ICEConnectionStateDisconnected {
 			fmt.Printf("peer %v disconnected\n", clientID)
-
-			r.UnregisterPeer(clientID)
 			return
 		}
 
 		if connectionState == webrtc.ICEConnectionStateFailed {
 			fmt.Printf("peer %v failed\n", clientID)
-
-			r.UnregisterPeer(clientID)
 			return
 		}
 	})

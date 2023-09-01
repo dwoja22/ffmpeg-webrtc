@@ -1,9 +1,9 @@
 package server
 
 import (
+	"ffmpeg-webrtc/pkg/webrtc"
 	"log"
 	"net/http"
-	ws "ffmpeg-webrtc/pkg/websocket"
 	"text/template"
 
 	"github.com/gorilla/mux"
@@ -27,7 +27,7 @@ func indexHandler(t *template.Template) http.HandlerFunc {
 	}
 }
 
-func wsHandler(room *ws.Room) http.HandlerFunc {
+func wsHandler(room *webrtc.Room) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		upgrader := websocket.Upgrader{}
 
@@ -43,7 +43,7 @@ func wsHandler(room *ws.Room) http.HandlerFunc {
 			return
 		}
 
-		client := ws.NewClient(conn, clientID, room)
+		client := webrtc.NewClient(conn, clientID, room)
 		room.Register <- client
 
 		go client.Read()
@@ -51,7 +51,7 @@ func wsHandler(room *ws.Room) http.HandlerFunc {
 	}
 }
 
-func registerHandlers(mux *mux.Router, room *ws.Room) {
+func registerHandlers(mux *mux.Router, room *webrtc.Room) {
 	indexTemplate := template.Must(template.ParseFiles("src/html/index.html"))
 	mux.HandleFunc("/", indexHandler(indexTemplate))
 	mux.HandleFunc("/ws", wsHandler(room))

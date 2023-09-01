@@ -2,24 +2,30 @@ package server
 
 import (
 	"context"
+	"ffmpeg-webrtc/pkg/webrtc"
 	"fmt"
 	"net/http"
 	"time"
-
-	ws "ffmpeg-webrtc/pkg/websocket"
 
 	"github.com/gorilla/mux"
 )
 
 type Server struct {
-	Room *ws.Room
-	Done chan bool
+	room *webrtc.Room
+	done chan bool
 }
 
-func (s *Server) StartServer() {
+func NewServer(room *webrtc.Room, done chan bool) *Server {
+	return &Server{
+		room: room,
+		done: done,
+	}
+}
+
+func (s *Server) Start() {
 	//create a server instance
 	server := &http.Server{
-		Addr:         ":7000",
+		Addr:         "localhost:7000",
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 5 * time.Second,
 		Handler:      nil,
@@ -28,14 +34,14 @@ func (s *Server) StartServer() {
 	router := mux.NewRouter()
 	server.Handler = router
 
-	registerHandlers(router, s.Room)
+	registerHandlers(router, s.room)
 
 	ctx, cancel := context.WithCancel(context.Background())
 
 	serverErrors := make(chan error, 1)
 
 	go func() {
-		<-s.Done
+		<-s.done
 		cancel()
 	}()
 

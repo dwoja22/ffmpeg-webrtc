@@ -8,9 +8,8 @@
     "h264",
     "-c:v",
     "copy",
-    "pipe:1"
+    "pipe:pipe1"
   ],
-  "stderr":true,
-  "debug":false,
-  "stream_type":"rtp"
+  "from_file":true,
+  "pipe_name":"pipe1"
 }

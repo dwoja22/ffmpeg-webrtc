@@ -1,12 +1,10 @@
-package camera
+package h264
 
 import (
-	"bytes"
 	"encoding/binary"
 	"fmt"
 )
 
-//TODO:: improve the efficiency of this payloader
 type Payloader struct {
 	SPS []byte
 	PPS []byte
@@ -16,12 +14,8 @@ func NewPayloader() *Payloader {
 	return &Payloader{}
 }
 
-//define h264 nal unit types and start code prefixes according to https://tools.ietf.org/html/rfc6184
-var PREFIX1 = []byte{0x00, 0x00, 0x01}
-var PREFIX2 = []byte{0x00, 0x00, 0x00, 0x01}
-
 const (
-	NALU_TYPE_SLICE = 1
+	NALU_TYPE_P     = 1
 	NALU_TYPE_DPA   = 2
 	NALU_TYPE_DPB   = 3
 	NALU_TYPE_DPC   = 4
@@ -38,52 +32,87 @@ const (
 	NALU_TYPE_FUA   = 28
 	NALU_TYPE_FUB   = 29
 
+	//0x78 = 01111000
+	//0 maps to the F bit, 11 maps to NRI, 11000 maps to type 24
+	//0, 11, 11000 = 0, 3, 24, false, highest priority, stap-a nal type id
 	STAP_A_HEADER = 0x78
 	NAL_REF_IDC   = 0x60
 
 	FUA_HEADER_SIZE = 2
 )
 
-func (p *Payloader) Payload(mtu uint16, data []byte) [][]byte {
-	var prefix int
-	var payloads [][]byte
+//findNal finds the start code prefix of a nal unit and returns the start index and length of the prefix
+//-1 indicates that the nal is at the beginning of the data
+//example
+//0 0 0 1 - prefixLength = 4
+//0 1 2 - zero count as we iterate through the data
+//0 + 2 - 3 = -1, 3 + 1 = 4 - nal at the beginning of the data, represented by -1, 4 for the prefix length
+func findNal(data []byte, start int) (prefixStart, prefixLength int) {
+	zeros := 0
 
-	for i := 0; i < len(data); i++ {
-		//determine if the h264 data is using prefix 1 or prefix 2
-		if bytes.Equal(data[i:i+len(PREFIX1)], PREFIX1) {
-			prefix = 3
-			break
+	for i, b := range data[start:] {
+		if b == 0 {
+			zeros++
+			continue
+		} else if b == 1 {
+			if zeros >= 2 { //make sure we have at least 2 zeros, otherwise it's just a random 1
+				return start + i - zeros, zeros + 1
+			}
 		}
 
-		if bytes.Equal(data[i:i+len(PREFIX2)], PREFIX2) {
-			prefix = 4
-			break
+		//reset the counter to start counting zeros again for finding the next nal
+		zeros = 0
+	}
+	return -1, -1
+}
+
+//extractNalUnits extracts all nal units from the data, works with both single and multiple nal units
+//as well as with prefix 0 0 1 and 0 0 0 1 or a mix of both
+func extractNalUnits(data []byte, extractNal func([]byte)) {
+	nalStart, prefixLength := findNal(data, 0)
+
+	//single nal unit or nal at the start of the data
+	if nalStart == -1 {
+		extractNal(data)
+	} else {
+		for nalStart != -1 {
+			prevNalStart := nalStart + prefixLength
+			//find the next nal unit
+			nalStart, prefixLength = findNal(data, prevNalStart)
+			if nalStart != -1 {
+				extractNal(data[prevNalStart:nalStart])
+			} else {
+				//nal unit is at the end of the data
+				extractNal(data[prevNalStart:])
+			}
 		}
 	}
+}
 
-	nals := extractNalUnits(data, prefix)
+func (p *Payloader) Payload(mtu uint16, data []byte) [][]byte {
+	var payloads [][]byte
 
-	for _, nal := range nals {
+	extractNalUnits(data, func(nal []byte) {
 		if len(nal) == 0 {
-			continue
+			return
 		}
 
 		naltype := nal[0] & 0x1F
-		//this is the priority of the nal unit, possible values are 0, 32, 64, 96 which are mapped to 0, 1, 2, 3 and are used to determine the order of the nal units in the stream
+		//this is the NRI (nal reference index) and is the priority of the nal unit, possible values are 0, 1, 2, 3 and are used to determine the priority of the nal
 		nalRefIdc := nal[0] & 0x60
 
 		if naltype == NALU_TYPE_SPS {
 			p.SPS = nal
-			continue
+			return
 		}
 
 		if naltype == NALU_TYPE_PPS {
 			p.PPS = nal
-			continue
+			return
 		}
 
 		if naltype == NALU_TYPE_AUD || naltype == NALU_TYPE_FILL {
-			continue
+			return
 		}
 
 		if p.SPS != nil && p.PPS != nil {
@@ -113,7 +142,8 @@ func (p *Payloader) Payload(mtu uint16, data []byte) [][]byte {
 			nalOut := make([]byte, len(nal))
 			copy(nalOut, nal)
 			payloads = append(payloads, nalOut)
-			continue
+
+			return
 		}
 
 		//Package as STAP-A, non-interleaved
@@ -127,7 +157,7 @@ func (p *Payloader) Payload(mtu uint16, data []byte) [][]byte {
 		nalDataRemaining := nalDataLength
 
 		if min(maxFragmentSize, nalDataRemaining) <= 0 {
-			continue
+			return
 		}
 
 		for nalDataRemaining > 0 {
@@ -155,55 +185,11 @@ func (p *Payloader) Payload(mtu uint16, data []byte) [][]byte {
 			nalDataRemaining -= currentFragmentSize
 			nalDataIndex += currentFragmentSize
 		}
-	}
+	})
 
 	return payloads
 }
 
-func extractNalUnits(data []byte, prefix int) [][]byte {
-	var start int
-	var nals [][]byte
-
-	//check if we have enough data to check for start code prefix
-	if prefix == 3 && len(data) < 4 || prefix == 4 && len(data) < 5 {
-		return nil
-	}
-
-	var p []byte
-
-	if prefix == 3 {
-		p = PREFIX1
-	}
-
-	if prefix == 4 {
-		p = PREFIX2
-	}
-
-	for i := 0; i < len(data); i++ {
-		if i+prefix >= len(data) {
-			break
-		}
-
-		//found start code prefix of nal unit
-		if bytes.Equal(data[i:i+prefix], p) {
-			if i > start {
-				nals = append(nals, data[start+prefix:i])
-			}
-
-			start = i
-		}
-	}
-
-	//check if we have any remaining data
-	if start+prefix < len(data) {
-		nals = append(nals, data[start+prefix:])
-	}
-
-	return nals
-}
-
-//TODO:: does not work as expected, ffprobe output and mine are different, fix this
-//function checks what type of nal units the data contains
 func nalType(data []byte) {
 	//check for nal unit type
 	//the nal unit type is the last 5 bits of the byte, so we need to mask the byte with 0x1F, which is 0001 1111
@@ -222,8 +208,10 @@ func nalType(data []byte) {
 		fmt.Println("found SPS")
 	case NALU_TYPE_PPS:
 		fmt.Println("found PPS")
+	case NALU_TYPE_P:
+		fmt.Println("found P")
 	case NALU_TYPE_IDR:
-		fmt.Println("found IDR")
+		fmt.Println("found I")
 	case NALU_TYPE_SEI:
 		fmt.Println("found SEI")
 	case NALU_TYPE_DPA:
@@ -232,17 +220,6 @@ func nalType(data []byte) {
 		fmt.Println("found DPB")
 	case NALU_TYPE_DPC:
 		fmt.Println("found DPC")
-	case NALU_TYPE_SLICE:
-		fmt.Println("found slice")
-		if nalRefIdc == 0 {
-			fmt.Println("slice is (B frame)")
-		} else if nalRefIdc == 1 {
-			fmt.Println("slice is (P frame)")
-		} else if nalRefIdc == 2 {
-			fmt.Println("slice is (I frame)")
-		} else {
-			fmt.Println("unknown nal ref idc")
-		}
 	case NALU_TYPE_AUD:
 		fmt.Println("found AUD")
 	case NALU_TYPE_EOSEQ:
