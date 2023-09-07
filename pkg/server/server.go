@@ -25,7 +25,7 @@ func NewServer(room *webrtc.Room, done chan bool) *Server {
 func (s *Server) Start() {
 	//create a server instance
 	server := &http.Server{
-		Addr:         "localhost:7000",
+		Addr:         ":7000",
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 5 * time.Second,
 		Handler:      nil,

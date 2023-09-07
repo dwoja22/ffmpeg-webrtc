@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"ffmpeg-webrtc/pkg/h264"
 	"fmt"
+	"sync"
 
 	"github.com/google/uuid"
 	"github.com/pion/rtp"
@@ -23,6 +24,7 @@ type Room struct {
 	Register   chan *Client
 	Unregister chan *Client
 	done       chan bool
+	mu         sync.Mutex
 }
 
 func NewRoom(done chan bool) *Room {
@@ -31,6 +33,7 @@ func NewRoom(done chan bool) *Room {
 		Broadcast:  make(chan []byte, 1),
 		Register:   make(chan *Client, 1),
 		Unregister: make(chan *Client, 1),
+		mu:         sync.Mutex{},
 		done:       done,
 	}
 }
@@ -42,10 +45,14 @@ func (r *Room) Start() {
 		select {
 		case client := <-r.Register:
 			fmt.Println("registering client with id: ", client.id)
+			r.mu.Lock()
 			r.Clients[client.id] = client
+			r.mu.Unlock()
 		case client := <-r.Unregister:
 			if _, ok := r.Clients[client.id]; ok {
+				r.mu.Lock()
 				delete(r.Clients, client.id)
+				r.mu.Unlock()
 				close(client.send)
 			}
 		case msg := <-r.Broadcast:
