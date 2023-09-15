@@ -2,12 +2,10 @@ package webrtc
 
 import (
 	"encoding/json"
-	"ffmpeg-webrtc/pkg/h264"
 	"fmt"
 	"sync"
 
 	"github.com/google/uuid"
-	"github.com/pion/rtp"
 	"github.com/pion/webrtc/v3"
 )
 
@@ -150,9 +148,6 @@ func (r *Room) Start() {
 				client.RTPSender = rtpSender
 				client.SSRC = encoding[0].SSRC
 
-				payloader := h264.NewPayloader()
-				client.Packetizer = rtp.NewPacketizer(1400, 96, uint32(client.SSRC), payloader, rtp.NewRandomSequencer(), 90000)
-
 				answer, err := peerConnection.CreateAnswer(nil)
 				if err != nil {
 					fmt.Println("error creating answer: ", err)
@@ -203,6 +198,8 @@ func (r *Room) HandlePeer(pc *webrtc.PeerConnection, clientID string) {
 			fmt.Println("peer connected")
 
 			go r.Clients[clientID].WriteRTP()
+			go r.Clients[clientID].ReadRTCP()
+
 			return
 		}
 

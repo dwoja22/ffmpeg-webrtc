@@ -5,32 +5,32 @@ import (
 	"log"
 
 	"github.com/gorilla/websocket"
+	"github.com/pion/rtcp"
 	"github.com/pion/rtp"
 	"github.com/pion/webrtc/v3"
 )
 
 type Client struct {
-	id         string
-	conn       *websocket.Conn
-	send       chan []byte
-	room       *Room
-	Track      *webrtc.TrackLocalStaticRTP
-	RTPSender  *webrtc.RTPSender
-	SSRC       webrtc.SSRC
-	PC         *webrtc.PeerConnection
-	Frames     chan []byte
-	Packetizer rtp.Packetizer
-	done       chan bool
+	id        string
+	conn      *websocket.Conn
+	send      chan []byte
+	room      *Room
+	Track     *webrtc.TrackLocalStaticRTP
+	RTPSender *webrtc.RTPSender
+	SSRC      webrtc.SSRC
+	PC        *webrtc.PeerConnection
+	Packets   chan *rtp.Packet
+	done      chan bool
 }
 
 func NewClient(conn *websocket.Conn, clientID string, room *Room) *Client {
 	client := Client{
-		id:     clientID,
-		conn:   conn,
-		send:   make(chan []byte, 1),
-		room:   room,
-		Frames: make(chan []byte, 30),
-		done:   make(chan bool, 1),
+		id:      clientID,
+		conn:    conn,
+		send:    make(chan []byte, 1),
+		room:    room,
+		Packets: make(chan *rtp.Packet, 240),
+		done:    make(chan bool, 1),
 	}
 
 	return &client
@@ -60,12 +60,8 @@ func (c *Client) Write() {
 func (c *Client) WriteRTP() {
 	for {
 		select {
-		case frame := <-c.Frames:
-			packets := c.Packetizer.Packetize(frame, uint32(160))
-
-			for _, p := range packets {
-				c.Track.WriteRTP(p)
-			}
+		case packet := <-c.Packets:
+			c.Track.WriteRTP(packet)
 		case <-c.done:
 			return
 		}
@@ -80,12 +76,22 @@ func (c *Client) ReadRTCP() {
 		default:
 			rtcpPackets, _, err := c.RTPSender.ReadRTCP()
 			if err != nil {
-				fmt.Println(err)
+				fmt.Println("could not read rtcp:", err)
 				return
 			}
 
 			for _, packet := range rtcpPackets {
-				fmt.Println(packet)
+				switch packet.(type) {
+				case *rtcp.ReceiverEstimatedMaximumBitrate:
+					//implement
+					fmt.Println("received remb")
+				case *rtcp.PictureLossIndication:
+					//implement
+					fmt.Println("received pli")
+				case *rtcp.TransportLayerNack:
+					//implement
+					fmt.Println("received nack")
+				}
 			}
 		}
 	}

@@ -2,6 +2,7 @@ package stream
 
 import (
 	"encoding/json"
+	"ffmpeg-webrtc/pkg/h264"
 	"ffmpeg-webrtc/pkg/server"
 	wbrtc "ffmpeg-webrtc/pkg/webrtc"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/pion/rtp"
 	"github.com/pion/webrtc/v3"
 	"golang.org/x/sys/unix"
 )
@@ -92,7 +94,6 @@ func (s *Stream) Start() error {
 	return nil
 }
 
-//TODO: implement
 func (s *Stream) Stop() error {
 	//stop the ffmpeg process
 	s.cmd.Process.Signal(syscall.SIGTERM)
@@ -183,9 +184,11 @@ func (s *Stream) streamFromDevice() error {
 }
 
 func (s *Stream) stream() {
-	fmt.Println("started streaming")
 	buf := make([]byte, 1024*1024)
-	frames := make(chan []byte, 30)
+	frames := make(chan []byte, 240)
+
+	payloader := h264.NewPayloader()
+	packetizer := rtp.NewPacketizer(1400, 96, uint32(0), payloader, rtp.NewRandomSequencer(), 90000)
 
 	go func() {
 		for {
@@ -200,8 +203,11 @@ func (s *Stream) stream() {
 
 	go func() {
 		for frame := range frames {
-			for _, client := range s.room.Clients {
-				client.Frames <- frame
+			packets := packetizer.Packetize(frame, uint32(160))
+			for _, packet := range packets {
+				for _, client := range s.room.Clients {
+					client.Packets <- packet
+				}
 			}
 		}
 	}()
