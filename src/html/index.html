@@ -23,8 +23,6 @@
     }]
   });
 
-
-
   if (window.WebSocket) {
     var ws = new WebSocket('ws://' + host + '/ws?clientID=' + clientID);
     ws.onopen = function() {
@@ -43,6 +41,7 @@
           break;
         case IceCandidate:
           console.log('received icecandidate from peer');
+          console.log(m.ice_candidate);
           let iceCandidate = m.ice_candidate;
           pc.addIceCandidate(iceCandidate)
 
@@ -88,18 +87,42 @@
       OfferToReceiveVideo:true,
     };
 
-    pc.createOffer(options).then(function(local_offer) {
-      pc.setLocalDescription(local_offer);
-      offer = JSON.stringify(local_offer);
 
-      let m = {
-        client_id: clientID,
-        kind : Offer,
-        offer: local_offer
-      };
+    pc.addEventListener(
+      'negotiationneeded',
+      function(event) {
+        console.log('negotiationneeded event triggered');
 
-      ws.send(JSON.stringify(m));
-    })
+        pc.createOffer(options).then(function(local_offer) {
+          pc.setLocalDescription(local_offer);
+          offer = JSON.stringify(local_offer);
+
+          let m = {
+            client_id: clientID,
+            kind : Offer,
+            offer: local_offer
+          };
+
+          ws.send(JSON.stringify(m));
+        })
+      });
+
+
+    pc.onnegtiationneeded = function(event) {
+      console.log('onnegtiationneeded event triggered');
+      pc.createOffer(options).then(function(local_offer) {
+        pc.setLocalDescription(local_offer);
+        offer = JSON.stringify(local_offer);
+
+        let m = {
+          client_id: clientID,
+          kind : Offer,
+          offer: local_offer
+        };
+
+        ws.send(JSON.stringify(m));
+      })
+    }
 
     pc.ontrack = function(event) {
       console.log('ontrack event triggered');
