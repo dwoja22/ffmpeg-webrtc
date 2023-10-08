@@ -6,6 +6,9 @@ import (
 	"sync"
 
 	"github.com/google/uuid"
+	"github.com/pion/interceptor"
+	"github.com/pion/interceptor/pkg/cc"
+	"github.com/pion/interceptor/pkg/gcc"
 	"github.com/pion/webrtc/v3"
 )
 
@@ -14,6 +17,13 @@ const (
 	ANSWER
 	ICECANDIDATE
 	STOP
+)
+
+const (
+	LowBitrate      = 100_000
+	MidBitrate      = 300_000
+	HighBitrate     = 500_000
+	VeryHighBitrate = 1_000_000
 )
 
 type Room struct {
@@ -37,8 +47,6 @@ func NewRoom(done chan bool) *Room {
 }
 
 func (r *Room) Start() {
-	var peerConnection *webrtc.PeerConnection
-
 	for {
 		select {
 		case client := <-r.Register:
@@ -83,24 +91,53 @@ func (r *Room) Start() {
 					},
 				}
 
-				err := mediaEngine.RegisterCodec(webrtc.RTPCodecParameters{RTPCodecCapability: codec, PayloadType: 96}, webrtc.RTPCodecTypeVideo)
-				if err != nil {
+				if err := mediaEngine.RegisterCodec(webrtc.RTPCodecParameters{RTPCodecCapability: codec, PayloadType: 96}, webrtc.RTPCodecTypeVideo); err != nil {
 					fmt.Println("error registering codec: ", err)
 				}
 
-				api := webrtc.NewAPI(webrtc.WithMediaEngine(&mediaEngine))
+				interceptorRegistry := interceptor.Registry{}
 
-				peerConnection, err = api.NewPeerConnection(webrtc.Configuration{PeerIdentity: m.ClientID, ICEServers: []webrtc.ICEServer{{URLs: []string{"stun:stun.l.google.com:19302"}}}})
+				congestionController, err := cc.NewInterceptor(func() (cc.BandwidthEstimator, error) {
+					return gcc.NewSendSideBWE(gcc.SendSideBWEInitialBitrate(LowBitrate))
+				})
+
+				if err != nil {
+					fmt.Println("error creating congestion controller: ", err)
+				}
+
+				estimatorChan := make(chan cc.BandwidthEstimator, 1)
+
+				congestionController.OnNewPeerConnection(func(id string, estimator cc.BandwidthEstimator) {
+					estimatorChan <- estimator
+				})
+
+				interceptorRegistry.Add(congestionController)
+
+				if err = webrtc.ConfigureTWCCHeaderExtensionSender(&mediaEngine, &interceptorRegistry); err != nil {
+					fmt.Println("error registering default interceptors: ", err)
+				}
+
+				if err = webrtc.RegisterDefaultInterceptors(&mediaEngine, &interceptorRegistry); err != nil {
+					fmt.Println("error registering default interceptors: ", err)
+				}
+
+				api := webrtc.NewAPI(webrtc.WithMediaEngine(&mediaEngine), webrtc.WithInterceptorRegistry(&interceptorRegistry))
+
+				peerConnection, err := api.NewPeerConnection(webrtc.Configuration{PeerIdentity: m.ClientID, ICEServers: []webrtc.ICEServer{{URLs: []string{"stun:stun.l.google.com:19302"}}}})
 				if err != nil {
 					fmt.Println("error creating peer connection: ", err)
 					continue
 				}
 
 				client.PC = peerConnection
+				client.Estimator = <-estimatorChan
 
 				r.HandlePeer(peerConnection, client.id)
 
-				peerConnection.SetRemoteDescription(m.Offer)
+				if err := peerConnection.SetRemoteDescription(m.Offer); err != nil {
+					fmt.Println("error setting remote description: ", err)
+					continue
+				}
 
 				peerConnection.OnICECandidate(func(candidate *webrtc.ICECandidate) {
 					if candidate == nil {
@@ -172,19 +209,23 @@ func (r *Room) Start() {
 				}
 
 				client.Send(msgJSON)
-				continue
 			}
 
 			if m.Kind == ICECANDIDATE {
 				fmt.Println("iceCandidate from client received")
+				fmt.Println("iceCandidate: ", m.ClientICECandidate)
 
-				peerConnection.AddICECandidate(m.ClientICECandidate)
+				err := client.PC.AddICECandidate(m.ClientICECandidate)
+				if err != nil {
+					fmt.Println("error adding ice candidate: ", err)
+				}
 				continue
 			}
 
 			//TODO: handle stop
 			if m.Kind == STOP {
 				fmt.Println("stop from client received")
+				client.Stop()
 			}
 		}
 	}
@@ -199,12 +240,14 @@ func (r *Room) HandlePeer(pc *webrtc.PeerConnection, clientID string) {
 
 			go r.Clients[clientID].WriteRTP()
 			go r.Clients[clientID].ReadRTCP()
+			go r.Clients[clientID].BandwidthEstimator()
 
 			return
 		}
 
 		if connectionState == webrtc.ICEConnectionStateDisconnected {
 			fmt.Printf("peer %v disconnected\n", clientID)
+			r.RemoveClient(clientID)
 			return
 		}
 
@@ -213,6 +256,13 @@ func (r *Room) HandlePeer(pc *webrtc.PeerConnection, clientID string) {
 			return
 		}
 	})
+}
+
+func (r *Room) RemoveClient(clientID string) {
+	r.Clients[clientID].Stop()
+	r.mu.Lock()
+	delete(r.Clients, clientID)
+	r.mu.Unlock()
 }
 
 type Message struct {
